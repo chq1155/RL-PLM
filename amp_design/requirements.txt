@@ -1,0 +1,8 @@
+torch
+numpy
+transformers
+trl
+fair-esm
+scikit-learn
+tqdm
+wandb
