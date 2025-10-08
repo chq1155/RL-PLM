@@ -1,0 +1,3 @@
+[submodule "inverse_folding"]
+	path = inverse_folding
+	url = https://github.com/Eikor/iplm-rl.git
