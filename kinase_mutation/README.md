@@ -16,6 +16,7 @@ Implementation of Kinase Mutation
 pip install -r requirements.txt
 ```
 
+Download ESM 8M, ESM 35M, or ESM 650M Model to this folder.
 ## Quick Start
 
 ### 1. Training Models
