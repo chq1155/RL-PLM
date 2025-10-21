@@ -37,7 +37,7 @@ RL-PLM/
 ## 📦 Data and Model Weights
 
 All datasets and pretrained checkpoints can be downloaded here:  
-[**PLM_RL_data.zip (Google Drive)**]([https://www.dropbox.com/](https://drive.google.com/))
+[**RL_PLM_data (Google Drive)**]([https://www.dropbox.com/](https://drive.google.com/)
 
 Unzip and place the contents under your `BASE_PATH` before running any experiment.
 
