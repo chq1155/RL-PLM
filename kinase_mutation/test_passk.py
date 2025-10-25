@@ -74,7 +74,7 @@ class PhoQEnv(gym.Env):
         self.len_step = 0
         self.max_len = max_len
         
-        datas = pd.read_csv(path_96, names=['AACombo', 'Fitness','FitnessGroup'], header=0)
+        datas = pd.read_csv(path_96, names=['AACombo', 'Fitness'], header=0)
         self.PhoQ = []
         self.PhoQ_fitness = []
         self.PhoQ_protein = []
