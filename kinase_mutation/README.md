@@ -85,6 +85,16 @@ Training process generates TensorBoard logs, which can be viewed with the follow
 tensorboard --logdir ./tensorboard_logs
 ```
 
+## Eval
+
+```bash
+python test_passk.py
+```
+And
+```bash
+python calculate_passk.py
+```
+
 ## Acknowledgments
 
 Thanks to [StableBaseline3](https://github.com/DLR-RM/stable-baselines3) and [KnowRLM](https://github.com/HICAI-ZJU/KnowRLM). We build this library based on their codebase.
