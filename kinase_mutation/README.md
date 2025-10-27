@@ -85,15 +85,7 @@ Training process generates TensorBoard logs, which can be viewed with the follow
 tensorboard --logdir ./tensorboard_logs
 ```
 
-## Eval
 
-```bash
-python test_passk.py
-```
-And
-```bash
-python calculate_passk.py
-```
 
 ## Acknowledgments
 
