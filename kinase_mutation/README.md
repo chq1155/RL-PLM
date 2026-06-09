@@ -1,94 +1,101 @@
-# Kinase Mutation 
+# Kinase Mutation
 
-Implementation of Kinase Mutation
+Main-stream code for the PhoQ kinase mutation experiments. The entrypoint is
+`PhoQ_env.py`, which trains an ESM-backed mutation policy with PPO, DPO, or GRPO.
 
 ## Requirements
-
-- Python 3.10+
-- PyTorch 1.13.1+ (with CUDA support)
-- Transformers 4.29.0+
-- Stable Baselines3
-- Gym 0.26.2+
-
-## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Download ESM 8M, ESM 35M, or ESM 650M Model to this folder.
-## Quick Start
+Install a CUDA-compatible PyTorch build separately if your cluster requires a
+specific CUDA version.
 
-### 1. Training Models
+## Data And Model Files
 
-Train with PPO algorithm:
+Expected default layout:
+
+```text
+kinase_mutation/
+  data/
+    PhoQ.csv
+    train_init_sequences.csv
+  esm_8m/
+    config.json
+    pytorch_model.bin
+    tokenizer_config.json
+    vocab.txt
+```
+
+You can also pass all paths explicitly with `--train_init_path`,
+`--fitness_path`, and `--model_dir`.
+
+## Training
+
+PPO:
 
 ```bash
 python PhoQ_env.py \
   --algorithm PPO \
+  --model_name ESM_8M \
+  --model_dir ./esm_8m \
+  --train_init_path ./data/train_init_sequences.csv \
+  --fitness_path ./data/PhoQ.csv \
   --path ./checkpoints \
+  --device cuda:0 \
+  --seed 42 \
   --steps 10000 \
   --num_envs 10 \
   --max_step 3 \
   --score_stop_criteria 60
 ```
 
-Train with DPO algorithm:
+DPO:
 
 ```bash
 python PhoQ_env.py \
   --algorithm DPO \
+  --model_name ESM_8M \
+  --model_dir ./esm_8m \
   --path ./checkpoints \
-  --steps 10000 \
-  --num_envs 10 \
-  --max_step 3 \
-  --score_stop_criteria 60
+  --device cuda:0 \
+  --seed 42 \
+  --steps 10000
 ```
 
-### 2. Main Parameters
+GRPO:
 
-- `--algorithm`: Reinforcement learning algorithm 
-- `--path`: Model save path
-- `--steps`: Total training steps
-- `--num_envs`: Number of parallel environments
-- `--max_step`: Maximum steps per episode
-- `--score_stop_criteria`: Fitness threshold for stopping training
-- `--gamma`: Discount factor (default: 0)
-- `--ent_coef`: Entropy coefficient for encouraging exploration (default: 0)
-- `--clip`: PPO clipping parameter (default: 0.2)
-
-## Model Configuration
-
-### ESM Model Selection
-
-Modify the `model_name` variable in `ESM_PhoQ.py`:
-
-```python
-model_name = "ESM_8M"    # 8M parameter version
-model_name = "ESM_35M"   # 35M parameter version  
-model_name = "ESM_650M"  # 650M parameter version
+```bash
+python PhoQ_env.py \
+  --algorithm GRPO \
+  --model_name ESM_8M \
+  --model_dir ./esm_8m \
+  --path ./checkpoints \
+  --device cuda:0 \
+  --seed 42 \
+  --steps 10000
 ```
 
-### Device Configuration
+## Key Arguments
 
-Default CUDA device usage:
+- `--algorithm`: one of `PPO`, `DPO`, or `GRPO`.
+- `--model_name`: one of `ESM_8M`, `ESM_35M`, or `ESM_650M`.
+- `--model_dir`: local Hugging Face model directory for the selected ESM model.
+- `--train_init_path` / `--fitness_path`: CSV inputs for initial states and rewards.
+- `--device` / `--seed`: hardware selection and deterministic initialization.
+- `--path`: checkpoint output directory.
+- `--tensorboard_log`: optional TensorBoard log directory.
 
-```python
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-```
+Generated checkpoints and logs are ignored by git.
 
-## Training Monitoring
-
-Training process generates TensorBoard logs, which can be viewed with the following command:
+## Monitoring
 
 ```bash
 tensorboard --logdir ./tensorboard_logs
 ```
 
-
-
 ## Acknowledgments
 
-Thanks to [StableBaseline3](https://github.com/DLR-RM/stable-baselines3) and [KnowRLM](https://github.com/HICAI-ZJU/KnowRLM). We build this library based on their codebase.
-
-
+This folder builds on Stable Baselines3 and KnowRLM-style reinforcement learning
+components.

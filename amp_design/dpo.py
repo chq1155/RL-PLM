@@ -62,7 +62,7 @@ class TrainingConfig:
     output_dir: Path = Path("dpo_runs")
     esm_mode: str = "8M"
     wandb_entity: str | None = None
-    use_wandb: bool = True
+    use_wandb: bool = False
 
 
 class UltraLowMemoryDPOTrainer:
@@ -339,7 +339,8 @@ def parse_args() -> TrainingConfig:
     parser.add_argument("--tracker-project-name", type=str, default=defaults.tracker_project_name, help="wandb project name.")
     parser.add_argument("--exp-name", type=str, default=defaults.exp_name, help="wandb run name.")
     parser.add_argument("--reward-margin-threshold", type=float, default=defaults.reward_margin_threshold, help="Minimum reward margin to keep a pair.")
-    parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging.")
+    parser.add_argument("--use-wandb", action="store_true", help="Enable wandb logging.")
+    parser.add_argument("--no-wandb", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--wandb-entity", type=str, help="Optional wandb entity.")
     args = parser.parse_args()
 
@@ -373,7 +374,7 @@ def parse_args() -> TrainingConfig:
         output_dir=args.output_dir,
         esm_mode=args.esm_mode,
         wandb_entity=args.wandb_entity,
-        use_wandb=not args.no_wandb,
+        use_wandb=args.use_wandb and not args.no_wandb,
     )
 
 
@@ -388,13 +389,17 @@ def load_policy_and_tokenizer(cfg: TrainingConfig):
 
 def load_reward_model(cfg: TrainingConfig, device: torch.device):
     batch_converter, esm_model, alphabet = load_esm(cfg.esm_mode, device=device)
-    classifier = MLP(input_dim=320, hidden_dim=128)
+    classifier = MLP(input_dim=esm_embedding_dim(cfg.esm_mode), hidden_dim=128)
     if cfg.classifier_checkpoint is None:
         raise ValueError("Classifier checkpoint must be provided.")
     state = torch.load(cfg.classifier_checkpoint, map_location="cpu")
     classifier.load_state_dict(state)
     classifier = classifier.to(device).eval()
     return batch_converter, esm_model, alphabet, classifier
+
+
+def esm_embedding_dim(esm_mode: str) -> int:
+    return {"8M": 320, "650M": 1280}[esm_mode]
 
 
 def ensure_output_dir(path: Path) -> None:

@@ -35,8 +35,43 @@ from transformers.modeling_outputs import (
     SequenceClassifierOutputWithPast,
     TokenClassifierOutput,
 )
-from transformers.modeling_utils import PreTrainedModel, SequenceSummary
-from transformers.pytorch_utils import Conv1D, find_pruneable_heads_and_indices, prune_conv1d_layer
+from transformers.modeling_utils import PreTrainedModel
+try:
+    from transformers.modeling_utils import SequenceSummary
+except ImportError:
+    from transformers.models.gpt2.modeling_gpt2 import GPT2SequenceSummary as SequenceSummary
+from transformers.pytorch_utils import Conv1D
+try:
+    from transformers.pytorch_utils import find_pruneable_heads_and_indices, prune_conv1d_layer
+except ImportError:
+    def find_pruneable_heads_and_indices(heads, n_heads, head_size, already_pruned_heads):
+        heads = set(heads) - already_pruned_heads
+        mask = torch.ones(n_heads, head_size)
+        for head in heads:
+            head = head - sum(1 if pruned_head < head else 0 for pruned_head in already_pruned_heads)
+            mask[head] = 0
+        mask = mask.view(-1).contiguous().eq(1)
+        index = torch.arange(mask.numel())[mask].long()
+        return heads, index
+
+    def prune_conv1d_layer(layer, index, dim=1):
+        index = index.to(layer.weight.device)
+        weight = layer.weight.index_select(dim, index).clone().detach()
+        if dim == 0:
+            bias = layer.bias.clone().detach()
+        else:
+            bias = layer.bias[index].clone().detach()
+
+        new_size = list(layer.weight.size())
+        new_size[dim] = len(index)
+        new_layer = Conv1D(new_size[1], new_size[0]).to(layer.weight.device)
+        new_layer.weight.requires_grad = False
+        new_layer.weight.copy_(weight.contiguous())
+        new_layer.weight.requires_grad = True
+        new_layer.bias.requires_grad = False
+        new_layer.bias.copy_(bias.contiguous())
+        new_layer.bias.requires_grad = True
+        return new_layer
 from transformers.utils import (
     ModelOutput,
     add_code_sample_docstrings,
@@ -45,7 +80,26 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
+try:
+    from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
+except ModuleNotFoundError:
+    def get_device_map(n_layers, devices):
+        devices = list(devices)
+        if not devices:
+            raise ValueError("At least one device is required to build a device map.")
+        layers = list(range(n_layers))
+        layers_per_device = math.ceil(n_layers / len(devices))
+        return {
+            device: layers[i * layers_per_device : (i + 1) * layers_per_device]
+            for i, device in enumerate(devices)
+            if layers[i * layers_per_device : (i + 1) * layers_per_device]
+        }
+
+    def assert_device_map(device_map, num_blocks):
+        blocks = sorted(block for blocks in device_map.values() for block in blocks)
+        expected = list(range(num_blocks))
+        if blocks != expected:
+            raise ValueError(f"Device map must cover transformer blocks {expected}, got {blocks}.")
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 
 import importlib.util

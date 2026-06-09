@@ -1,9 +1,8 @@
 import os
+import random
 import torch
-from lit_model import LitModel
 from argparse import ArgumentParser, Namespace
 from torch.utils.data import Dataset, DataLoader
-from pytorch_lightning import seed_everything
 from utils.data_utils import get_AB_pair_data, get_s1131_data
 from dataset import SeqDataset
 from transformers import AutoTokenizer
@@ -14,6 +13,13 @@ import logging
 from pathlib import Path
 
 
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
 def parse_args() -> Namespace:
     """
     Parse command-line arguments and set global seed.
@@ -21,11 +27,7 @@ def parse_args() -> Namespace:
     parser = ArgumentParser()
     parser.add_argument("--model_locate", type=str, default="facebook/esm2_t33_650M_UR50D")
 
-    parser.add_argument(
-        "--ckpt_locate",
-        type=str,
-        default="./checkpoints_sigmul_rmabnormal/AB1101/esm2_t33_650M_UR50D_AB1101-val_pearson_corr_lr-0.0001_loss-mse.ckpt",
-    )
+    parser.add_argument("--ckpt_locate", type=str, required=True, help="Path to a downloaded ProtAttBA checkpoint.")
     parser.add_argument(
         "--preds_path",
         type=str,
@@ -57,6 +59,7 @@ def parse_args() -> Namespace:
 
     # Trainer
     parser.add_argument("--seed", type=int, default=3407)
+    parser.add_argument("--device", type=str, default="cuda", help="Torch device, e.g. cuda, cuda:0, or cpu")
     args = parser.parse_args()
 
     seed_everything(args.seed)
@@ -286,8 +289,10 @@ def load_cdr_info(file_path: str) -> pd.DataFrame:
     """
     df = pd.read_csv(file_path)
 
-    required_columns = ["H1", "H2", "H3", "L1", "L2", "L3"]
+    required_columns = ["PDB", "H1", "H2", "H3", "L1", "L2", "L3"]
     available_columns = [col for col in required_columns if col in df.columns]
+    if "PDB" not in available_columns:
+        raise ValueError(f"CDR info file must contain a PDB column: {file_path}")
     df_filtered = df[available_columns]
 
     return df_filtered
@@ -297,9 +302,11 @@ def eval(args: Namespace) -> None:
     """
     Run evaluation for a given checkpoint and dataset.
     """
+    from lit_model import LitModel
+
     logging.info("Loading checkpoint from %s", args.ckpt_locate)
     lit_model = LitModel.load_from_checkpoint(args.ckpt_locate)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     model = lit_model.model
     model.eval()
     model.to(device)

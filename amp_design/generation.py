@@ -73,7 +73,7 @@ def load_trl_model(model_path: Path, tokenizer_path: Path):
 
 def build_reward_fn(classifier_path: Path, esm_mode: str, device: torch.device) -> Callable[[Iterable[str]], Tuple[torch.Tensor, torch.Tensor]]:
     batch_converter, esm_model, alphabet = load_esm(esm_mode, device=device)
-    classifier = MLP(input_dim=320, hidden_dim=128).to(device)
+    classifier = MLP(input_dim=esm_embedding_dim(esm_mode), hidden_dim=128).to(device)
     state = torch.load(classifier_path, map_location="cpu")
     classifier.load_state_dict(state)
     classifier.eval()
@@ -89,6 +89,10 @@ def build_reward_fn(classifier_path: Path, esm_mode: str, device: torch.device) 
         )
 
     return scorer
+
+
+def esm_embedding_dim(esm_mode: str) -> int:
+    return {"8M": 320, "650M": 1280}[esm_mode]
 
 
 def generate_sequences(

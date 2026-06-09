@@ -1,32 +1,39 @@
 import argparse
-import imp
-from stable_baselines3.grpo import GRPO
-from stable_baselines3.dpo import DPO
 import torch
-import gym
-import itertools
 import numpy as np
-import copy
 import random
 import time
 import csv
-from contextlib import contextmanager
+from pathlib import Path
 import pandas as pd
 import sys, os
-from transformers import AutoTokenizer,AutoModel,EsmForMaskedLM
-from stable_baselines3.common.logger import configure
-from stable_baselines3.common.monitor import Monitor
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common import logger
-from stable_baselines3.common.env_checker import check_env
-cwd = os.path.dirname(os.path.abspath(__file__))
+from transformers import AutoTokenizer
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+cwd = Path(__file__).resolve().parent
+
+try:
+    import gym
+except ModuleNotFoundError as exc:
+    _GYM_IMPORT_ERROR = exc
+
+    class _MissingGym:
+        class Env:
+            pass
+
+        class spaces:
+            pass
+
+    gym = _MissingGym()
+else:
+    _GYM_IMPORT_ERROR = None
 
 collected_seqs_set = set()
-# path_96 or path_192 or path_288
-path_96 = "data/train_init_sequences.csv"
 pos = {0:96,1:97,2:100}
 re_pos = {96:0,97:1,100:2}
+tokenizer = None
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+fitness = {}
+logger = None
 
 AMINO_ACIDS = ["A", "R", "N", "D", "C", "Q", "E", "G", "H", "I", "L", "K", "M", "F", "P", "S", "T", "W", "Y", "V"]
 class PhoQEnv(gym.Env):
@@ -49,7 +56,7 @@ class PhoQEnv(gym.Env):
         self.len_step = 0
         self.max_len = max_len
 
-        datas = pd.read_csv(path_96, names=['AACombo', 'Fitness'], header=0)
+        datas = pd.read_csv(args.train_init_path, names=['AACombo', 'Fitness'], header=0)
         self.PhoQ = []
         self.PhoQ_fitness = []
         self.PhoQ_protein = []
@@ -111,10 +118,6 @@ class PhoQEnv(gym.Env):
             score_truth = -100
         else:
             score_truth = -1
-        if string in ground.keys():
-            ground_truth = ground[string]
-        else:
-            ground_truth = -1
         self.reward = score_truth
 
         terminal = self.check_terminal(self.reward, string, have)
@@ -122,13 +125,14 @@ class PhoQEnv(gym.Env):
         return self.reward, terminal, score_truth
 
     def _edit_sequence(self, seq, actions):
-        protein = seq
-        position = actions[0]+1
-        protein[position] = actions[1]
+        protein = seq.copy()
+        position = int(actions[0]) + 1
+        protein[position] = int(actions[1])
 
         return protein
 
     def step(self, actions: torch.Tensor):
+        old_state = self.state.copy()
         new_seqs = self._edit_sequence(self.state, actions)
 
 
@@ -147,8 +151,8 @@ class PhoQEnv(gym.Env):
         info = {}
         info['terminal'] = str(terminal)
         info['action'] = ",".join([str(actions[i]) for i in range(2)])
-        info['old_seq'] = tokenizer.decode(self.state[0])
-        info['new_seq'] = tokenizer.decode(new_seqs[0])
+        info['old_seq'] = tokenizer.decode(old_state)
+        info['new_seq'] = tokenizer.decode(new_seqs)
         info['init_seq'] = self.initial_seq if self.initial_seq is not None else "None"
         info['rewards'] = float(term_reward)
         info['score_truth'] = float(score_truth)
@@ -173,24 +177,23 @@ def print_trainable_parameters(model):
             trainable_params += param.numel()
     print(f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}")
 
+
+def load_fitness_table(path: str | Path) -> dict[str, float]:
+    table = {}
+    with open(path, encoding="utf-8-sig", newline="") as handle:
+        for row in csv.reader(handle):
+            if not row or row[0] in {"AACombo", "Variants"}:
+                continue
+            table[row[0]] = float(row[1])
+    return table
+
 if __name__ == '__main__':
-    import sys, os
-    from stable_baselines3.ppo import PPO
-    from stable_baselines3.common.callbacks import CheckpointCallback
-    from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
-    from ESM_PhoQ import PolicyNet,model_name
-    import pickle
-    import torch
     import warnings
-    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-    learn_rate=1e-6
-    
-    tensorboard_log = "./tensorboard_logs/"+str(learn_rate)
 
     warnings.filterwarnings("ignore", category=UserWarning)
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', type=str, help="path to save results", default="./checkpoints")
-    parser.add_argument('--algorithm', type=str, help="RL algorithm", default="DPO")
+    parser.add_argument('--algorithm', type=str, choices=["PPO", "DPO", "GRPO"], help="RL algorithm", default="DPO")
 
     parser.add_argument('--gamma', type=float, default=0, help="discount_factor")
     parser.add_argument('--steps', type=int, default=10000, help="total time steps")
@@ -203,44 +206,73 @@ if __name__ == '__main__':
     parser.add_argument('--n_steps', type=int, default=10, help="number of roll out steps")
     parser.add_argument('--max_step', type=int, default=3, help="maximum number of steps")
     parser.add_argument('--score_stop_criteria', type=float, default=60, help="stop_criteria")
+    parser.add_argument('--batch_size', type=int, default=16, help="policy batch size")
+    parser.add_argument('--learning_rate', type=float, default=1e-6, help="optimizer learning rate")
+    parser.add_argument('--seed', type=int, default=42, help="random seed")
+    parser.add_argument('--device', type=str, default="cuda", help="Torch device, e.g. cuda, cuda:0, or cpu")
+    parser.add_argument('--model_name', type=str, default="ESM_8M", choices=["ESM_8M", "ESM_35M", "ESM_650M"])
+    parser.add_argument('--model_dir', type=str, default=None, help="Path to the selected ESM checkpoint directory")
+    parser.add_argument('--train_init_path', type=str, default=str(cwd / "data" / "train_init_sequences.csv"))
+    parser.add_argument('--fitness_path', type=str, default=str(cwd / "data" / "PhoQ.csv"))
+    parser.add_argument('--tensorboard_log', type=str, default=None, help="TensorBoard log directory")
+    parser.add_argument('--save_freq', type=int, default=2000, help="checkpoint frequency in environment steps")
+    parser.add_argument('--hf_endpoint', type=str, default=None, help="Optional Hugging Face endpoint mirror")
 
     args = parser.parse_args()
-    path = args.path
+    if _GYM_IMPORT_ERROR is not None:
+        raise RuntimeError("Install kinase dependencies with `pip install -r requirements.txt` before training.") from _GYM_IMPORT_ERROR
+    from stable_baselines3.ppo import PPO
+    from stable_baselines3.common.callbacks import CheckpointCallback
+    from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common import logger as sb3_logger
+    from stable_baselines3.dpo import DPO
+    from stable_baselines3.grpo import GRPO
+    from ESM_PhoQ import PolicyNet, set_runtime_config
+
+    logger = sb3_logger
+    path = Path(args.path)
+    path.mkdir(parents=True, exist_ok=True)
     t1 = time.time()
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-    action_space = gym.spaces.multi_discrete.MultiDiscrete([3,33])
+    if args.hf_endpoint:
+        os.environ['HF_ENDPOINT'] = args.hf_endpoint
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    selected_model_dir = args.model_dir or {
+        "ESM_8M": cwd / "esm_8m",
+        "ESM_35M": cwd / "esm_35m",
+        "ESM_650M": cwd / "esm_650m",
+    }[args.model_name]
+    set_runtime_config(
+        selected_model_name=args.model_name,
+        model_dir=selected_model_dir,
+        selected_device=device,
+    )
+    tensorboard_log = args.tensorboard_log or str(cwd / "tensorboard_logs" / str(args.learning_rate))
+    action_space = gym.spaces.multi_discrete.MultiDiscrete([args.max_len, 33])
     observation_space = gym.spaces.MultiDiscrete([33]*args.max_len)
 
-    fitness = {}
-    for row in csv.reader(open("data/PhoQ.csv")):
-        if row[0] == 'AACombo':
-            continue
-        fitness[row[0]] = float(row[1])
+    fitness = load_fitness_table(args.fitness_path)
 
-    ground = {}
-    for row in csv.reader(open("./data/PhoQ.csv")):
-        if row[0] == 'Variants':
-            continue
-        ground[row[0]] = float(row[1])
-
-    if model_name == "ESM_8M":
-        tokenizer = AutoTokenizer.from_pretrained("./esm_8m")
-    elif model_name == "ESM_35M":
-        tokenizer = AutoTokenizer.from_pretrained("./esm_35m")
-    elif model_name == "ESM_650M":
-        tokenizer = AutoTokenizer.from_pretrained("./esm_650m")
+    tokenizer = AutoTokenizer.from_pretrained(selected_model_dir)
 
     m_env_kwargs = {"action_space": action_space, "observation_space": observation_space, "args": args}
     
     m_env = make_vec_env(PhoQEnv, n_envs=args.num_envs, env_kwargs=m_env_kwargs)
 
-    checkpoint_callback = CheckpointCallback(save_freq=2000, save_path=path + '/', name_prefix='rl_model')
+    checkpoint_callback = CheckpointCallback(save_freq=args.save_freq, save_path=str(path), name_prefix='rl_model')
     if args.algorithm=="PPO":
-        model = PPO(PolicyNet, m_env, learning_rate=learn_rate, verbose=1, n_steps=args.n_steps, ent_coef=args.ent_coef,
-                    gamma=args.gamma,  tensorboard_log=tensorboard_log, device=device, batch_size=16)
+        model = PPO(PolicyNet, m_env, learning_rate=args.learning_rate, verbose=1, n_steps=args.n_steps, ent_coef=args.ent_coef,
+                    gamma=args.gamma,  tensorboard_log=tensorboard_log, device=device, batch_size=args.batch_size, seed=args.seed)
     if args.algorithm=="DPO":
-        model = DPO(PolicyNet, m_env, learning_rate=learn_rate, verbose=1, n_steps=args.n_steps, ent_coef=args.ent_coef,
-                    gamma=args.gamma,  tensorboard_log=tensorboard_log, device=device, batch_size=16)
+        model = DPO(PolicyNet, m_env, learning_rate=args.learning_rate, verbose=1, n_steps=args.n_steps, ent_coef=args.ent_coef,
+                    gamma=args.gamma,  tensorboard_log=tensorboard_log, device=device, batch_size=args.batch_size, seed=args.seed)
+    if args.algorithm=="GRPO":
+        model = GRPO(PolicyNet, m_env, learning_rate=args.learning_rate, verbose=1, n_steps=args.n_steps, ent_coef=args.ent_coef,
+                     gamma=args.gamma,  tensorboard_log=tensorboard_log, device=device, batch_size=args.batch_size, seed=args.seed)
 
     print_trainable_parameters(model.policy)
 
@@ -249,6 +281,6 @@ if __name__ == '__main__':
 
     print("finish training in %.4f" % (t2 - t1))
     print("saving model.....")
-    model.save(path=path + str(model_name)+"/PPO/"+str(learn_rate))
-
-
+    final_path = path / args.model_name / args.algorithm / str(args.learning_rate)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(str(final_path))

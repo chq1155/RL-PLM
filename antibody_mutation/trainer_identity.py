@@ -2,16 +2,28 @@ import torch, os, sys
 import numpy as np
 import pandas as pd
 from argparse import ArgumentParser
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning import seed_everything
-from lit_model import LitModel
 from dataset import WrapperDataset
-from utils.test_callback import MetricsToFileCallback
 from utils.data_utils import load_data
 import os
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in {"true", "1", "yes", "y"}:
+        return True
+    if value in {"false", "0", "no", "n"}:
+        return False
+    raise ValueError(f"Expected a boolean value, got {value!r}.")
+
+
+def seed_everything(seed: int) -> None:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def parse_args():
@@ -21,7 +33,7 @@ def parse_args():
     # dataset
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--data_folder", type=str, default="./data/csv_AB645")
+    parser.add_argument("--data_folder", type=str, default="./data/identity_data/csv_AB645")
     parser.add_argument("--data_name", type=str, default="AB645")
     parser.add_argument("--max_length", type=int, default=None)
 
@@ -49,7 +61,7 @@ def parse_args():
     parser.add_argument("--precision", type=str, default="32")
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--test_ratio", type=float, default=0.1)
-    parser.add_argument("--rm_abnormal", type=bool, default=False)  # !
+    parser.add_argument("--rm_abnormal", type=str2bool, default=False)
     args = parser.parse_args()
 
     seed_everything(args.seed)
@@ -58,6 +70,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+    import pytorch_lightning as pl
+    from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+    from lit_model import LitModel
+    from utils.test_callback import MetricsToFileCallback
+
     # load data
     file_path = args.data_folder
     data_name = args.data_name

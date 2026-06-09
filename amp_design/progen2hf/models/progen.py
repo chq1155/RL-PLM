@@ -1,3 +1,4 @@
+import math
 from typing import Tuple
 
 import numpy as np
@@ -12,7 +13,26 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 from transformers import GenerationMixin
 from transformers.utils import logging
-from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
+try:
+    from transformers.utils.model_parallel_utils import assert_device_map, get_device_map
+except ModuleNotFoundError:
+    def get_device_map(n_layers, devices):
+        devices = list(devices)
+        if not devices:
+            raise ValueError("At least one device is required to build a device map.")
+        layers = list(range(n_layers))
+        layers_per_device = math.ceil(n_layers / len(devices))
+        return {
+            device: layers[i * layers_per_device : (i + 1) * layers_per_device]
+            for i, device in enumerate(devices)
+            if layers[i * layers_per_device : (i + 1) * layers_per_device]
+        }
+
+    def assert_device_map(device_map, num_blocks):
+        blocks = sorted(block for blocks in device_map.values() for block in blocks)
+        expected = list(range(num_blocks))
+        if blocks != expected:
+            raise ValueError(f"Device map must cover transformer blocks {expected}, got {blocks}.")
 from .progen_config import ProGenConfig
 
 logger = logging.get_logger(__name__)

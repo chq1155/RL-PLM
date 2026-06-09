@@ -1,0 +1,10 @@
+numpy>=1.24,<2.0
+pandas>=2.0,<3.0
+pytorch-lightning>=2.2,<2.4
+scikit-learn>=1.4,<2.0
+scipy>=1.10,<2.0
+torch>=2.1,<2.4
+torchmetrics>=1.4,<2.0
+tqdm>=4.66,<5.0
+transformers>=4.40,<4.45
+wandb>=0.15,<0.18

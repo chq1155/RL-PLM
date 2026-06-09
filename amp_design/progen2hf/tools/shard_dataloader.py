@@ -123,7 +123,7 @@ def get_pifold_dataset(args, tokenizer, epoch=0, floor=False):
 
 # class args:
 #     rank = 0
-#     pifold_shards = ["/root/llava_pro/esmfold_shards/shard-000%.03d.tar" % i for i in range(0,100)]
+#     pifold_shards = ["/path/to/esmfold_shards/shard-000%.03d.tar" % i for i in range(0,100)]
 #     train_num_samples = 1000
 #     lm_path = "progen"
 #     seed = 2023
@@ -137,7 +137,7 @@ def get_pifold_dataset(args, tokenizer, epoch=0, floor=False):
 # def create_tokenizer_custom(file):
 #     with open(file, 'r') as f:
 #         return Tokenizer.from_str(f.read())
-# progen_tokenizer = '/root/progen2-base/tokenizer.json'
+# progen_tokenizer = '/path/to/progen2-base/tokenizer.json'
 # progen_tokenizer = create_tokenizer_custom(progen_tokenizer)
 # progen_tokenizer.post_processor = TemplateProcessing(
 #     single="1 $A 2",

@@ -2,17 +2,29 @@ import torch, os, sys
 import numpy as np
 import pandas as pd
 from argparse import ArgumentParser
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning import seed_everything
-from lit_model import LitModel
 from dataset import WrapperDataset
-from utils.test_callback import MetricsToFileCallback
 from utils.sig_mul_utils import load_data
 import os
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+
+
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in {"true", "1", "yes", "y"}:
+        return True
+    if value in {"false", "0", "no", "n"}:
+        return False
+    raise ValueError(f"Expected a boolean value, got {value!r}.")
+
+
+def seed_everything(seed: int) -> None:
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
 
 def parse_args():
     parser = ArgumentParser()
@@ -21,7 +33,7 @@ def parse_args():
     # dataset
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--data_folder", type=str, default="./data/AB1101_sigmul_split")
+    parser.add_argument("--data_folder", type=str, default="./data/sigmul_data")
     parser.add_argument("--data_name", type=str, default="AB1101")
     parser.add_argument("--max_length", type=int, default=None)
 
@@ -48,7 +60,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--precision", type=str, default="32")
     parser.add_argument("--val_ratio", type=float, default=0.1)
-    parser.add_argument("--rm_abnormal", type=bool, default=True)  # !
+    parser.add_argument("--rm_abnormal", type=str2bool, default=True)
     args = parser.parse_args()
 
     seed_everything(args.seed)
@@ -57,6 +69,11 @@ def parse_args():
 
 def main():
     args = parse_args()
+    import pytorch_lightning as pl
+    from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+    from lit_model import LitModel
+    from utils.test_callback import MetricsToFileCallback
+
     file_path = args.data_folder
     data_name = args.data_name
     train_data, val_data, test_data = load_data(
@@ -112,8 +129,8 @@ def main():
     )
     trainer = pl.Trainer(
         accelerator=args.accelerator,
-        devices = [7],
-        strategy='ddp' if torch.cuda.device_count() > 1 else 'single_device',
+        devices=args.devices,
+        strategy=args.strategy,
         num_nodes=args.num_nodes,
         max_epochs=args.max_epochs,
         accumulate_grad_batches=args.accumulate_grad_batches,

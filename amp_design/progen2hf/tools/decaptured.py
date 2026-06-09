@@ -1,6 +1,6 @@
 @torch.no_grad()
 def check_lora(model):
-    train_dataset, eval_dataset = PETDataset.from_folder('/root/inhousepet/train_data', tokenizer, max_len=1024, split=[0.9, 0.1])
+    train_dataset, eval_dataset = PETDataset.from_folder('/path/to/pet/train_data', tokenizer, max_len=1024, split=[0.9, 0.1])
 
 
     # DataLoaders creation:
@@ -14,8 +14,9 @@ def check_lora(model):
     # model.eval()
     losses = []
     for step, batch in enumerate(tqdm(eval_dataloader)):
+        device = next(model.parameters()).device
         for key, value in batch.items():
-            batch[key] = batch[key].cuda()
+            batch[key] = batch[key].to(device)
 
         with torch.no_grad():
             outputs = model(**batch)

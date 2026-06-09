@@ -64,7 +64,7 @@ def log_stats(sequences: List[str], rewards: torch.Tensor) -> None:
 
 def prepare_reward_model(classifier_path: Path, esm_mode: str, device: torch.device) -> Tuple[callable, torch.nn.Module]:
     batch_converter, esm_model, alphabet = load_esm(esm_mode, device=device)
-    classifier = MLP(input_dim=320, hidden_dim=128).to(device)
+    classifier = MLP(input_dim=esm_embedding_dim(esm_mode), hidden_dim=128).to(device)
     state = torch.load(classifier_path, map_location="cpu")
     classifier.load_state_dict(state)
     classifier.eval()
@@ -80,6 +80,10 @@ def prepare_reward_model(classifier_path: Path, esm_mode: str, device: torch.dev
         )
 
     return reward_fn, classifier
+
+
+def esm_embedding_dim(esm_mode: str) -> int:
+    return {"8M": 320, "650M": 1280}[esm_mode]
 
 
 def parse_args() -> argparse.Namespace:
@@ -110,7 +114,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tracker-project-name", type=str, default="ampgen_ppo", help="wandb project name.")
     parser.add_argument("--exp-name", type=str, default="ppo_run", help="wandb run name.")
     parser.add_argument("--wandb-entity", type=str, help="Optional wandb entity.")
-    parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging.")
+    parser.add_argument("--use-wandb", action="store_true", help="Enable wandb logging.")
+    parser.add_argument("--no-wandb", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -118,7 +123,7 @@ def create_ppo_config(args: argparse.Namespace) -> PPOConfig:
     return PPOConfig(
         tracker_project_name=args.tracker_project_name,
         exp_name=args.exp_name,
-        log_with=None if args.no_wandb else "wandb",
+        log_with="wandb" if args.use_wandb and not args.no_wandb else None,
         steps=args.steps,
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
@@ -160,7 +165,7 @@ def train(
         tokenizer=tokenizer,
     )
 
-    if not args.no_wandb:
+    if args.use_wandb and not args.no_wandb:
         wandb.init(
             project=args.tracker_project_name,
             name=args.exp_name,
@@ -185,7 +190,7 @@ def train(
             rewards = rewards.to(device)
             reward_tensors = [torch.tensor([val], device=device, dtype=torch.float32) for val in rewards]
 
-            if not args.no_wandb:
+            if args.use_wandb and not args.no_wandb:
                 log_stats(decoded, rewards.detach().cpu())
 
             trainer.step(query_tensors, responses, reward_tensors)
@@ -200,7 +205,7 @@ def train(
     ensure_dir(final_dir)
     trainer.save_pretrained(final_dir)
 
-    if not args.no_wandb:
+    if args.use_wandb and not args.no_wandb:
         wandb.finish()
 
 

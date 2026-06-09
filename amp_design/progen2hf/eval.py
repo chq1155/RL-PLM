@@ -1,11 +1,9 @@
 from models import load_progen
-from tools.evaluation_dataloader import ProteinSeqLoader
+import argparse
 import torch
 from torch.utils.data.dataloader import DataLoader
 from tqdm import tqdm
 import numpy as np
-from tools.shard_dataloader import get_pifold_dataset
-from tools.data_utils import pi_args, pi_valid_args, pi_test_args
 from torch.nn import CrossEntropyLoss
 
 @torch.no_grad()
@@ -28,8 +26,8 @@ def eval_pet(model, dataloader, tokenizer):
             
         attention_mask = tokens.attention_mask
         
-        with torch.cuda.amp.autocast(dtype=torch.float16):
-            outputs = progen_model(
+        with torch.amp.autocast(device_type=model.device.type, enabled=model.device.type == "cuda"):
+            outputs = model(
                 input_ids=tokens.input_ids,
                 attention_mask=attention_mask,
                 return_dict=True,
@@ -90,8 +88,8 @@ def eval_cath(model, dataloader):
 
             targets = tokens_.clone()
 
-            with torch.cuda.amp.autocast(dtype=torch.float16):
-                outputs = progen_model(
+            with torch.amp.autocast(device_type=model.device.type, enabled=model.device.type == "cuda"):
+                outputs = model(
                     input_ids=tokens_,
                     attention_mask=attention_mask_,
                     return_dict=True,
@@ -111,25 +109,40 @@ def eval_cath(model, dataloader):
     print(f'loss: {np.mean(losses)}, eos loss: {np.mean(losses_eos)} nan losses: {np.mean(losses_nan)} eos nan loss: {np.mean(losses_eos_nan)}')
     return losses, losses_eos, losses_nan, losses_eos_nan
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Evaluate a ProGen checkpoint on optional CATH/PET data.")
+    parser.add_argument("--model-path", required=True, help="Local ProGen checkpoint directory.")
+    parser.add_argument("--pet-data-folder", help="Optional PET fasta folder.")
+    parser.add_argument("--skip-cath", action="store_true", help="Skip CATH shard evaluation.")
+    parser.add_argument("--device", default="cuda", help="Torch device.")
+    return parser.parse_args()
+
+
 if __name__ == '__main__':
-    tokenizer, progen_model = load_progen('/root/ZJLAB_Progen_13B/iter_0200000/mp_rank_00')
-    print('13B-550K')
-    progen_model.cuda()
+    args = parse_args()
+    tokenizer, progen_model = load_progen(args.model_path)
+    progen_model.to(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
 
     # losses = check_lora(progen_model)
     # print(np.mean(losses))
 
-    losses, losses_eos, losses_nan, losses_eos_nan = eval_cath(progen_model, get_pifold_dataset(pi_valid_args, tokenizer))
-    losses, losses_eos, losses_nan, losses_eos_nan = eval_cath(progen_model, get_pifold_dataset(pi_test_args, tokenizer))
-    losses, losses_eos, losses_nan, losses_eos_nan = eval_cath(progen_model, get_pifold_dataset(pi_args, tokenizer))
+    if not args.skip_cath:
+        from tools.shard_dataloader import get_pifold_dataset
+        from tools.data_utils import pi_args, pi_test_args, pi_valid_args
 
-    test_loader = DataLoader(
-        ProteinSeqLoader.from_folder('/root/inhousepet/train_data', max_len=1024),
-        batch_size=1,
-        shuffle=False,
-        drop_last=False,
-        num_workers=2
+        eval_cath(progen_model, get_pifold_dataset(pi_valid_args, tokenizer))
+        eval_cath(progen_model, get_pifold_dataset(pi_test_args, tokenizer))
+        eval_cath(progen_model, get_pifold_dataset(pi_args, tokenizer))
+
+    if args.pet_data_folder:
+        from tools.evaluation_dataloader import ProteinSeqLoader
+
+        test_loader = DataLoader(
+            ProteinSeqLoader.from_folder(args.pet_data_folder, max_len=1024),
+            batch_size=1,
+            shuffle=False,
+            drop_last=False,
+            num_workers=2,
         )
-
-    losses = eval_pet(progen_model, test_loader, tokenizer)
-    print(np.mean(losses))
+        losses = eval_pet(progen_model, test_loader, tokenizer)
+        print(np.mean(losses))

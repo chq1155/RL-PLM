@@ -1,90 +1,112 @@
-# Sequence-Only Prediction of Binding Affinity Changes: A Robust and Interpretable Model for Antibody Engineering
+# Antibody Mutation
 
-## Introduction
+This folder contains the main antibody affinity and mutation-policy workflows used by RL-PLM.
 
-ProtAttBA is a protein language model that predicts binding affinity changes based solely on the sequence information of antibody-antigen complexes.
-
-## Usage
-
-### Install
-
-1. Create conda environment 
+## Setup
 
 ```bash
-conda create -n protab python==3.10
+conda create -n rl-plm-ab python=3.10
+conda activate rl-plm-ab
+pip install -r requirements.txt
 ```
 
-2. Install environment dependency
+Install the PyTorch build that matches your CUDA driver if the default wheel is not suitable.
 
-```bash
-# activate environment
-source activate protab
-# install pytorch
-conda install pytorch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 pytorch-cuda=11.8 -c pytorch -c nvidia 
-(or use pip: pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118)
+## Data And Checkpoints
 
-# install dependencies
-pip install -r ./requirments.txt
+Download antibody data and checkpoints from the project Google Drive linked in the root README. The commands below assume this layout after download:
+
+```text
+antibody_mutation/
+  data/
+    identity_data/
+      csv_AB1101/
+      csv_AB645/
+      csv_S1131/
+    sigmul_data/
+      AB1101_multiple_cdr_balance_train.csv
+      AB1101_multiple_cdr_balance_test.csv
+      cdr_info.csv
+  model/
+    esm2_650m/
+  checkpoints_identity_sigmul/
+    AB1101/
+      <ProtAttBA checkpoint>.ckpt
 ```
 
-### dataset
+The `data/`, checkpoint, result, and run-output folders are ignored by git.
 
-Cross validation dataset is located in the  ```cross_validation/data/csv``` folder  (Source: [Jin et al., 2024](https://github.com/ruofanjin/AttABseq)  ）
+## Supervised Reward Models
 
-Sequence identity dataset is located in the ```seq-identity_sig-mul/data/identity_data``` folder (Use MMseqs with ```--min-seq-id 0.3```)
-
-Single mutation training and multi-mutation testing dataset is located in the ```seq-identity_sig-mul/data/sigmul_data``` folder
-
-### Training
+Sequence-identity split:
 
 ```bash
-# For cross validation you can use cross_validation/scripts/bash_cross-validation.sh with different args
-cp bash_cross-validation.sh ../
-bash bash_cross-validation.sh 
-
-# For Sequence identity you can use seq-identity_sig-mul/scripts/bash_seq_identity.sh with different args
-cp bash_seq_identity.sh ../ 
-bash bash_seq_identity.sh
-
-# For Single mutation training and multi-mutation testing you can use seq-identity_sig-mul/scripts/bash_seq_sigmul.sh with different args
-cp bash_seq_sigmul.sh ../ 
-bash bash_seq_sigmul.sh
+python trainer_identity.py \
+  --model_locate ./model/esm2_650m \
+  --data_folder ./data/identity_data/csv_AB1101 \
+  --data_name AB1101 \
+  --devices 1 \
+  --accelerator gpu \
+  --strategy auto \
+  --seed 42 \
+  --rm_abnormal false
 ```
 
-### Evaluation
+Single-mutation training with multi-mutation evaluation:
 
 ```bash
-# For evaluation you can use the seq-identity_sig-mul/eval.py to predict the result by change the args
-python eval.py
+python trainer_sigmul.py \
+  --model_locate ./model/esm2_650m \
+  --data_folder ./data/sigmul_data \
+  --data_name AB1101 \
+  --devices 1 \
+  --accelerator gpu \
+  --strategy auto \
+  --seed 42 \
+  --rm_abnormal true
 ```
 
-### Mutation Policy Fine-Tuning
+Equivalent shell wrappers are in `scripts/bash_seq_identity.sh` and `scripts/bash_seq_sigmul.sh`; edit paths in the shell wrapper or pass the Python arguments directly as above.
 
-Two reinforcement-learning scripts are provided to adapt the base ProtAttBA policy for antibody mutation design:
-
-| Script | Algorithm | Notes |
-| ------ | --------- | ----- |
-| `mutation_policy.py` | PPO with value and position heads | Deterministic mutation sampling, GAE advantages |
-| `mutation_policy_grpo.py` | Grouped GRPO | Stochastic sampling with softmax-based credit assignment |
-
-Both scripts share the same CLI. Typical usage:
+## Evaluation
 
 ```bash
-# PPO-style fine-tuning
+python eval.py \
+  --model_locate ./model/esm2_650m \
+  --ckpt_locate ./checkpoints_identity_sigmul/AB1101/<ProtAttBA checkpoint>.ckpt \
+  --filt_path ./data/sigmul_data/AB1101_multiple_cdr_balance_test.csv \
+  --preds_path ./test_preds/AB1101 \
+  --device cuda:0 \
+  --seed 42
+```
+
+## Mutation Policy Fine-Tuning
+
+PPO:
+
+```bash
 python mutation_policy.py \
   --data_path ./data/sigmul_data/AB1101_multiple_cdr_balance_train.csv \
-  --checkpoint_path ./checkpoints_identity_sigmul/AB1101/esm2_t33_650M_UR50D_AB1101-val_pearson_corr_lr-3e-05_loss-mse_tok33.ckpt \
+  --cdr_info_path ./data/sigmul_data/cdr_info.csv \
+  --checkpoint_path ./checkpoints_identity_sigmul/AB1101/<ProtAttBA checkpoint>.ckpt \
   --output_dir ppo_runs/AB1101 \
+  --device cuda:0 \
+  --seed 42 \
   --batch_size 32 \
   --rollout_steps 4 \
-  --max_mutations 4 \
-  --use_wandb
+  --max_mutations 4
+```
 
-# GRPO-style fine-tuning
+GRPO:
+
+```bash
 python mutation_policy_grpo.py \
   --data_path ./data/sigmul_data/AB1101_multiple_cdr_balance_train.csv \
-  --checkpoint_path ./checkpoints_identity_sigmul/AB1101/esm2_t33_650M_UR50D_AB1101-val_pearson_corr_lr-3e-05_loss-mse_tok33.ckpt \
+  --cdr_info_path ./data/sigmul_data/cdr_info.csv \
+  --checkpoint_path ./checkpoints_identity_sigmul/AB1101/<ProtAttBA checkpoint>.ckpt \
   --output_dir grpo_runs/AB1101 \
+  --device cuda:0 \
+  --seed 42 \
   --batch_size 32 \
   --rollout_steps 4 \
   --max_mutations 4 \
@@ -93,10 +115,9 @@ python mutation_policy_grpo.py \
 
 Key flags:
 
-- `--data_path` / `--cdr_info_path`: CSV with training sequences and optional CDR annotations.
-- `--checkpoint_path`: Pre-trained ProtAttBA checkpoint used for initialization, reference, and reward models.
-- `--output_dir`: Destination directory for intermediate and final policy checkpoints.
-- `--rollout_steps` / `--max_mutations`: Control the length of each mutation rollout and the number of simultaneous point mutations.
-- `--use_wandb`: Enable Weights & Biases logging (project/name configured via `--wandb_project` and `--wandb_name`).
-
-Both trainers automatically thaw the top transformer blocks, add a position head, and save `base.pt` before optimization as well as per-epoch checkpoints and a final policy snapshot.
+- `--data_path` / `--cdr_info_path`: training CSV and CDR annotations.
+- `--checkpoint_path`: pretrained ProtAttBA checkpoint used for initialization, reference, and reward models.
+- `--output_dir`: destination for policy checkpoints.
+- `--device` / `--seed`: hardware selection and deterministic initialization.
+- `--rollout_steps` / `--max_mutations`: rollout length and number of simultaneous point mutations.
+- `--use_wandb`: optional Weights & Biases logging.

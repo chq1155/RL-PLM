@@ -3,20 +3,27 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, fields
 from pathlib import Path
+import random
 from typing import List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_lightning import seed_everything
 from torch.optim import Adam
 from tqdm import tqdm
 import wandb
 
 from eval import EvalDataset, load_cdr_info, load_eval_dataset
-from lit_model import LitModel
 from model import freeze_for_mutation_finetune_v2
-from ppo import build_kl_mask
+from rl_utils import build_kl_mask
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -192,7 +199,7 @@ class MutationGRPOTrainer:
     def __init__(self, args: argparse.Namespace, cfg: TrainConfig):
         self.args = args
         self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
         self.output_dir = Path(cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -211,6 +218,8 @@ class MutationGRPOTrainer:
         torch.save(self.policy.state_dict(), self.output_dir / "base.pt")
 
     def _load_models(self, hidden_size: int) -> Tuple[MutationPolicy, nn.Module, nn.Module]:
+        from lit_model import LitModel
+
         ckpt = self.cfg.checkpoint_path
         base = LitModel.load_from_checkpoint(ckpt).model
         policy = MutationPolicy(base, hidden_size=hidden_size).to(self.device)
@@ -475,6 +484,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_length", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--hidden_size", type=int, default=1280)
+    parser.add_argument("--device", type=str, default="cuda", help="Torch device, e.g. cuda, cuda:0, or cpu")
     parser.add_argument("--wandb_project", type=str, default="ProtAttBA")
     parser.add_argument("--wandb_name", type=str, default="mutation_grpo")
     parser.add_argument("--use_wandb", action="store_true")

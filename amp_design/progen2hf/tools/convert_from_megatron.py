@@ -1,4 +1,3 @@
-from transformers.models.megatron_gpt2.convert_megatron_gpt2_checkpoint import convert_megatron_checkpoint, recursive_print
 import sys
 import os
 import zipfile
@@ -30,7 +29,18 @@ def main():
         type=str,
         help="An optional config json file describing the pre-trained model.",
     )
+    parser.add_argument("--skip-validation", action="store_true", help="Skip loading the converted checkpoint after saving.")
     args = parser.parse_args()
+    try:
+        from transformers.models.megatron_gpt2.convert_megatron_gpt2_checkpoint import (
+            convert_megatron_checkpoint,
+            recursive_print,
+        )
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "This converter requires a Transformers version that provides "
+            "transformers.models.megatron_gpt2.convert_megatron_gpt2_checkpoint."
+        ) from exc
 
     # Extract the basename.
     basename = os.path.dirname(args.path_to_checkpoint)
@@ -142,14 +152,18 @@ def main():
     print(f'Saving checkpoint to "{output_checkpoint_file}"')
     torch.save(output_state_dict, output_checkpoint_file)
 
-    return basename
+    return basename, args
 
 if __name__ == '__main__':
-    basename = main()
+    basename, args = main()
+    if args.skip_validation:
+        print('Convert done; validation skipped.')
+        raise SystemExit(0)
     print('Convert done, now check the converted checkpoint')
-    # basename = '/root/ZJLAB_Progen_13B'
+    # basename = '/path/to/progen_checkpoint'
     from models import GPT2LMHeadModel
-    zj_progen = GPT2LMHeadModel.from_pretrained(basename).cuda()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    zj_progen = GPT2LMHeadModel.from_pretrained(basename).to(device)
 
     progen_tokenizer = create_tokenizer_custom(os.path.join(basename, 'tokenizer.json'))
     # add bos and eos
@@ -166,7 +180,7 @@ if __name__ == '__main__':
     tokens = '1TAPRSTRASGSEGSRPPGIPAKGRRCLPSRAGSVTPRFRHARQGTATVAKEQGRKLIASNRKARHDYHIEDTFEAGLVLTGTEVKSLRMGRASLIDGYAVFYGEELWLEGVHIPEYLNGNWTNHTPRRRRKLLLNRSELTKLAHKTSESGHTIVPLALYFKDGRAKVEIAVAKGKKAYDKRHALRERQDQREV2'
     
     with torch.no_grad():
-        with torch.cuda.amp.autocast(enabled=True):
+        with torch.amp.autocast(device_type=device.type, enabled=device.type == "cuda"):
             target = torch.tensor(progen_tokenizer.encode(tokens)).to(zj_progen.device)
             output = zj_progen(target, labels=target)
 

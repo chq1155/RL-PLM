@@ -1,5 +1,5 @@
-from typing import Callable, Dict, List, Optional, Tuple, Type, Union, Any
-import collections
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import gym
 from gym import spaces
@@ -18,15 +18,47 @@ from stable_baselines3.common.distributions import (
     MultiCategoricalDistribution,
     BernoulliDistribution,
     Distribution)
-from transformers import AutoTokenizer,AutoModel,EsmForMaskedLM,EsmModel
+from transformers import AutoTokenizer, EsmForMaskedLM, EsmModel
 from torch.distributions import Categorical
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 protein = "SYMVWSWFIYVLSANLLLVIPLLWVAAWWSLRPIEALAKEVRELEEHNRELLNPATTRELTSLVRNLNRLLKSERERYDKYRTTLTDLTHSLKTPL<mask><mask>LQ<mask><mask>LRSLRSEKMSVSDAEPVMLEQISRISQQIGYYLHRASMRGGTLLSRELHPVAPLLDNLTSALNKVYQRKGVNISLDISPEISFVGEQ"
 pos = {0:96,1:97,2:100}
 re_pos = {96:0,97:1,100:2}
 
-model_name="ESM_8M"
+model_name = "ESM_8M"
+_MODEL_DIRS = {
+    "ESM_8M": Path("./esm_8m"),
+    "ESM_35M": Path("./esm_35m"),
+    "ESM_650M": Path("./esm_650m"),
+}
+_MODEL_DIMS = {
+    "ESM_8M": 320,
+    "ESM_35M": 480,
+    "ESM_650M": 1280,
+}
+
+
+def set_runtime_config(
+    *,
+    selected_model_name: str = "ESM_8M",
+    model_dir: str | Path | None = None,
+    selected_device: str | torch.device | None = None,
+) -> None:
+    """Configure globals used by SB3 policy construction."""
+    global model_name, device
+
+    if selected_model_name not in _MODEL_DIRS:
+        raise ValueError(f"Unsupported model_name={selected_model_name!r}. Choose one of {sorted(_MODEL_DIRS)}.")
+    model_name = selected_model_name
+    if model_dir is not None:
+        _MODEL_DIRS[model_name] = Path(model_dir)
+    if selected_device is not None:
+        device = torch.device(selected_device)
+
+
+def get_model_dir() -> Path:
+    return _MODEL_DIRS[model_name]
 
 AMINO_ACIDS = ["A", "R", "N", "D", "C", "Q", "E", "G", "H", "I", "L", "K", "M", "F", "P", "S", "T", "W", "Y", "V"]
 def gelu(x):
@@ -140,7 +172,7 @@ class PolicyNet(BasePolicy):
                 optimizer_kwargs["eps"] = 1e-5
         self.use_sde = use_sde
 
-        self.action_dist = make_proba_distribution(4)
+        self.action_dist = make_proba_distribution(len(pos))
         self._build(lr_schedule)
         self.amino_loss = nn.CrossEntropyLoss()
         self.pos_loss = nn.CrossEntropyLoss()
@@ -160,21 +192,11 @@ class PolicyNet(BasePolicy):
         )
         return data
     def _build_mlp_extractor(self) -> None:
-        if model=="ESM_650M":
-            self.tokenizer = AutoTokenizer.from_pretrained("./esm_650m")
-            self.mlp_extractor = EsmModel.from_pretrained("./esm_650m")
-            self.lm_model = EsmForMaskedLM.from_pretrained("./esm_650m").to(device)
-            self.ref_model = EsmModel.from_pretrained("./esm_650m")
-        elif model=="ESM_35M":
-            self.tokenizer = AutoTokenizer.from_pretrained("./esm_35m")
-            self.mlp_extractor = EsmModel.from_pretrained("./esm_35m")
-            self.lm_model = EsmForMaskedLM.from_pretrained("./esm_35m").to(device)
-            self.ref_model = EsmModel.from_pretrained("./esm_35m")
-        elif model=="ESM_8M":
-            self.tokenizer = AutoTokenizer.from_pretrained("./esm_8m")
-            self.mlp_extractor = EsmModel.from_pretrained("./esm_8m")
-            self.lm_model = EsmForMaskedLM.from_pretrained("./esm_8m").to(device)
-            self.ref_model = EsmModel.from_pretrained("./esm_8m")
+        model_dir = get_model_dir()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        self.mlp_extractor = EsmModel.from_pretrained(model_dir).to(device)
+        self.lm_model = EsmForMaskedLM.from_pretrained(model_dir).to(device)
+        self.ref_model = EsmModel.from_pretrained(model_dir).to(device)
 
         self.tokens = self.tokenizer(protein, return_tensors="pt").to(device)
         self.AA2token = {}
@@ -189,15 +211,9 @@ class PolicyNet(BasePolicy):
         self._build_mlp_extractor()
 
         # self.lm_head = EsmLMHead()
-        if model=="ESM_650M":
-            self.action_net = ActionNet(1280*191, self.action_space).to(device)
-            self.value_net = ValueNet(1280*191).to(device)
-        if model=="ESM_35M":
-            self.action_net = ActionNet(480*191, self.action_space).to(device)
-            self.value_net = ValueNet(480*191).to(device)
-        if model=="ESM_8M":
-            self.action_net = ActionNet(320*191, self.action_space).to(device)
-            self.value_net = ValueNet(320*191).to(device)
+        hidden_dim = _MODEL_DIMS[model_name]
+        self.action_net = ActionNet(hidden_dim * 191, self.action_space).to(device)
+        self.value_net = ValueNet(hidden_dim * 191).to(device)
 
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
@@ -223,7 +239,7 @@ class PolicyNet(BasePolicy):
         log_prob = distribution.log_prob(actions)
 
         
-        act = torch.tensor([])
+        act = torch.empty((0, 2), dtype=torch.long, device=obs.device)
         for i, action in enumerate(actions):
             ori_aa = ''
             ori_hidden_state = 0
@@ -238,12 +254,13 @@ class PolicyNet(BasePolicy):
                         ori_hidden_state = self.mlp_extractor(obs)[0][0][position]
                     break
             AA_k = find_AA(obs[i], position, ori_aa, self.lm_model, self.tokenizer)
-            predicted_token_id = self.AA2token[AA_k[0]]
+            predicted_token_id = int(self.AA2token[AA_k[0]].item())
             position=position-1
             if min(act.shape) == 0:
-                act = torch.tensor([position, predicted_token_id]).unsqueeze(0)
+                act = torch.tensor([position, predicted_token_id], dtype=torch.long, device=obs.device).unsqueeze(0)
             else:
-                act = torch.cat((act,torch.tensor([position, predicted_token_id]).unsqueeze(0)), dim=0)
+                next_action = torch.tensor([position, predicted_token_id], dtype=torch.long, device=obs.device).unsqueeze(0)
+                act = torch.cat((act, next_action), dim=0)
 
         values = self.value_net(hidden_states).squeeze(-1)
         return act, values, log_prob
@@ -287,9 +304,25 @@ class PolicyNet(BasePolicy):
         :return: Taken action according to the policy
         """
         hidden_states = self._get_latent(observation.long())
+        self.ref = self.ref_model(**self.tokens)[0]
+        hidden_states = hidden_states / (self.ref + 1e-8)
         self.pos_prob = self.action_net(hidden_states)
         distribution = self._get_action_dist_from_latent(self.pos_prob)
-        return distribution.get_actions(deterministic=deterministic)
+        position_actions = distribution.get_actions(deterministic=deterministic)
+
+        actions = []
+        for i, position_action in enumerate(position_actions):
+            token_position = pos[int(position_action.item())] + 1
+            aa_choice = find_AA(
+                observation[i].long(),
+                token_position,
+                "",
+                self.lm_model,
+                self.tokenizer,
+            )[0]
+            predicted_token_id = int(self.AA2token[aa_choice].item())
+            actions.append([token_position - 1, predicted_token_id])
+        return torch.tensor(actions, dtype=torch.long, device=observation.device)
 
     def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor) -> Tuple[
         torch.Tensor, torch.Tensor, torch.Tensor]:

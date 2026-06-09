@@ -69,7 +69,6 @@ class TrainingConfig:
     temperature: float = 0.9
     world_size: int = torch.cuda.device_count()
     port: str = "12359"
-    device: str = "cuda"
     prompt: str = "<|bos|>"
     prompt_file: Path | None = None
     tokenizer_path: Path | None = None
@@ -79,7 +78,7 @@ class TrainingConfig:
     output_dir: Path = Path("grpo_runs")
     esm_mode: str = "8M"
     reward_margin_threshold: float = 0.01
-    use_wandb: bool = True
+    use_wandb: bool = False
     wandb_entity: str | None = None
     seed: int = 913
 
@@ -108,7 +107,6 @@ def parse_args() -> None:
     parser.add_argument("--top-p", type=float, default=defaults.top_p, help="Top-p sampling value.")
     parser.add_argument("--top-k", type=int, default=defaults.top_k, help="Top-k sampling value.")
     parser.add_argument("--world-size", type=int, help="Number of GPUs to use.")
-    parser.add_argument("--device", type=str, default=defaults.device, help="Device template (e.g., cuda).")
     parser.add_argument("--seed", type=int, default=defaults.seed, help="Random seed.")
     parser.add_argument("--prompt", type=str, default=defaults.prompt, help="Default generation prompt.")
     parser.add_argument("--prompt-file", type=Path, help="Optional file with prompts.")
@@ -118,7 +116,8 @@ def parse_args() -> None:
     parser.add_argument("--exp-name", type=str, default=defaults.exp_name, help="wandb experiment name.")
     parser.add_argument("--wandb-entity", type=str, help="Optional wandb entity.")
     parser.add_argument("--port", type=str, default=defaults.port, help="Distributed master port.")
-    parser.add_argument("--no-wandb", action="store_true", help="Disable wandb logging.")
+    parser.add_argument("--use-wandb", action="store_true", help="Enable wandb logging.")
+    parser.add_argument("--no-wandb", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     namespace = vars(args)
@@ -130,11 +129,17 @@ def parse_args() -> None:
         if field.name in namespace:
             setattr(CFG, field.name, namespace[field.name])
     CFG.world_size = CFG.world_size or torch.cuda.device_count()
-    CFG.use_wandb = not args.no_wandb
+    CFG.use_wandb = args.use_wandb and not args.no_wandb
+    if not torch.cuda.is_available():
+        raise RuntimeError("AMP GRPO requires CUDA/NCCL. Use dpo.py or ppo.py for single-device experiments.")
 
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def esm_embedding_dim(esm_mode: str) -> int:
+    return {"8M": 320, "650M": 1280}[esm_mode]
 
 class DistributedUltraLowMemoryGRPOTrainer:
     def __init__(self, policy, tokenizer, device, rank, world_size):
@@ -218,7 +223,7 @@ class DistributedUltraLowMemoryGRPOTrainer:
             policy_logprobs.append(token_lp.sum())
         policy_logprobs = torch.stack(policy_logprobs)
 
-        with torch.no_grad(), autocast(device_type="cuda"):
+        with torch.no_grad(), autocast(device_type=self.dev.type):
             ref_out    = self.ref_model(padded, use_cache=False)
             ref_logits = ref_out.logits if not isinstance(ref_out, tuple) else ref_out[0]
 
@@ -236,8 +241,7 @@ class DistributedUltraLowMemoryGRPOTrainer:
         advantages = rewards - rewards.mean()
         if CFG.advantage_normalization and advantages.std() > 1e-8:
             advantages = advantages / (advantages.std() + 1e-8)
-        slice_logits_list = [logits[:, t, :] for t in range(logits.size(1))]
-        token_lens = [r for _, r in lengths]
+        token_lens = [cand.size(0) for cand in candidates]
         per_token_pl = policy_logprobs / torch.tensor(token_lens, device=self.dev)
         per_token_rl = ref_logprobs    / torch.tensor(token_lens, device=self.dev)
 
@@ -265,12 +269,15 @@ class DistributedUltraLowMemoryGRPOTrainer:
             ranking_loss = (rl_sum / cnt) * CFG.ranking_loss_weight
 
         ent_losses = []
-        for (ql, rl), logits_slice in zip(lengths, slice_logits_list):
+        for i, cand in enumerate(candidates):
+            resp_len = cand.size(0)
+            start = lengths[i] - resp_len
+            logits_slice = logits[i, start:start + resp_len]
             lp = F.log_softmax(logits_slice, dim=-1)
             p  = lp.exp()
             ent = -(p * lp).sum(dim=-1).mean()
             ent_losses.append(ent)
-        seq_entropy = torch.stack(ent_losses).mean()
+        seq_entropy = torch.stack(ent_losses).mean() if ent_losses else torch.tensor(0.0, device=self.dev)
         entropy_loss = -CFG.entropy_weight * seq_entropy
 
         total_loss = policy_loss + kl_penalty + ranking_loss + entropy_loss
@@ -312,7 +319,7 @@ class DistributedUltraLowMemoryGRPOTrainer:
         policy_out = self.policy(padded, use_cache=False)
         logits     = policy_out.logits if not isinstance(policy_out, tuple) else policy_out[0]
 
-        with torch.no_grad(), autocast(device_type="cuda"):
+        with torch.no_grad(), autocast(device_type=self.dev.type):
             ref_out    = self.ref_model(padded, use_cache=False)
         ref_logits  = ref_out.logits if not isinstance(ref_out, tuple) else ref_out[0]
 
@@ -595,7 +602,7 @@ def train_worker(rank, world_size, cfg):
             print("Loading ESM and classifier...")
         
         batch_converter, esm_model, alphabet = load_esm(cfg.esm_mode, device=device)
-        classifier = MLP(input_dim=320, hidden_dim=128).to(device)
+        classifier = MLP(input_dim=esm_embedding_dim(cfg.esm_mode), hidden_dim=128).to(device)
         if cfg.classifier_checkpoint is None:
             raise ValueError("Classifier checkpoint must be provided.")
         classifier.load_state_dict(torch.load(cfg.classifier_checkpoint, map_location="cpu"))

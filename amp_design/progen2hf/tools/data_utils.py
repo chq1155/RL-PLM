@@ -309,8 +309,8 @@ class pi_args:
     The args for initializing webdataset 
     """
     rank = 0
-    # pifold_shards = ["/root/llava_pro/esmfold_shards/shard-000%.03d.tar" % i for i in range(0,40)] + ["/root/llava_pro/cath42_shards/train/shard-000%03d.tar" % j for j in range(0,18)]
-    pifold_shards = ["/root/cath42_shards/train/shard-000%03d.tar" % j for j in range(0,19)]
+    shard_root = os.environ.get("CATH42_SHARDS", "/path/to/cath42_shards")
+    pifold_shards = [f"{shard_root}/train/shard-{j:06d}.tar" for j in range(0, 19)]
     train_num_samples = 1000
     lm_path = "progen"
     seed = 2048
@@ -323,8 +323,8 @@ class pi_valid_args:
     The args for initializing webdataset 
     """
     rank = 0
-    # pifold_shards = ["/root/llava_pro/esmfold_shards/shard-000%.03d.tar" % i for i in range(0,100)] + ["/root/llava_pro/cath42_shards/train/shard-000%03d.tar" % j for j in range(0,18)]
-    pifold_shards = ["/root/cath42_shards/validation/shard-000000.tar"]
+    shard_root = os.environ.get("CATH42_SHARDS", "/path/to/cath42_shards")
+    pifold_shards = [f"{shard_root}/validation/shard-000000.tar"]
     train_num_samples = 1000
     lm_path = "progen"
     seed = 2048
@@ -337,8 +337,8 @@ class pi_test_args:
     The args for initializing webdataset 
     """
     rank = 0
-    # pifold_shards = ["/root/llava_pro/esmfold_shards/shard-000%.03d.tar" % i for i in range(0,100)] + ["/root/llava_pro/cath42_shards/train/shard-000%03d.tar" % j for j in range(0,18)]
-    pifold_shards = sorted(glob('/root/cath42_shards/test/*.tar'))
+    shard_root = os.environ.get("CATH42_SHARDS", "/path/to/cath42_shards")
+    pifold_shards = sorted(glob(f"{shard_root}/test/*.tar"))
     train_num_samples = 1000
     lm_path = "progen"
     seed = 2048

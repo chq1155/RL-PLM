@@ -12,7 +12,7 @@ All scripts expect Python 3.10+, PyTorch with CUDA support, PEFT, TRL, and the
 
 1. Install dependencies:
    ```bash
-   pip install -r requirements.txt  # populate with your environment specifics
+   pip install -r requirements.txt
    ```
 2. Make sure the ProGen2 base checkpoint and tokenizer are accessible on disk.
 3. Collect a classifier checkpoint compatible with the reward function (see `mlp.py`).
@@ -40,12 +40,13 @@ Important flags:
 
 - `--prompt` or `--prompt-file` define starting contexts for generation.
 - `--lora-checkpoint` loads a PEFT state dict and automatically remaps legacy keys.
-- `--no-wandb` disables Weights & Biases logging if you prefer offline runs.
+- `--use-wandb` enables optional Weights & Biases logging.
 
 ## Grouped Reinforcement Preference Optimisation (GRPO)
 
 `grpo.py` launches a distributed GRPO trainer. Provide the same resource paths as
 for DPO and supply the number of GPUs to use (defaults to all visible devices).
+GRPO uses CUDA/NCCL and requires one process per GPU.
 
 ```bash
 python grpo.py \
@@ -115,5 +116,6 @@ can post-process or filter downstream.
   tokenizer and either a single prompt (`--prompt`) or a text file of prompts
   (`--prompt-file`).
 
-Feel free to tailor the configuration defaults to your workloads—every CLI flag has
-a sensible default so the scripts can be slotted into automated pipelines quickly.
+All generated checkpoints, logs, and CSV exports are ignored by git. Keep experiment
+configuration in shell scripts or job files so runs can be repeated without editing
+the Python source.

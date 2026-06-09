@@ -57,7 +57,7 @@ class LitModel(LightningModule):
 
         self.save_hyperparameters()
 
-    def training_step(self, batch, batch_idx):  # TODO 修改输入
+    def training_step(self, batch, batch_idx):
         labels = batch["labels"]
 
         outs, logits_w_ab, logits_w_ag, logits_m_ab, logits_m_ag = self.model(
