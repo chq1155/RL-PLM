@@ -165,11 +165,13 @@ redistribution.
 ## Citation
 
 ```bibtex
-@inproceedings{cao2026forgetting,
-  title={The Forgetting-Learning Trade-off: Making Reinforcement Learning Work for Protein Language Models},
-  author={Cao, Hanqun and Zhang, Hongrui and Xu, Junde and Zhang, Zhou and Shen, Lingdong and Sun, Minghao and Liu, Ge and Xu, Jinbo and Li, Wu-Jun and Ni, Jinren and de la Fuente-Nunez, Cesar and Fu, Tianfan and Jin, Shuting and Heng, Pheng-Ann and Wu, Fang},
-  booktitle={Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
-  year={2026},
-  doi={10.1145/3770855.3818895}
+@misc{cao2025supervisionexplorationdoesprotein,
+      title={From Supervision to Exploration: What Does Protein Language Model Learn During Reinforcement Learning?}, 
+      author={Hanqun Cao and Hongrui Zhang and Junde Xu and Zhou Zhang and Lingdong Shen and Minghao Sun and Ge Liu and Jinbo Xu and Wu-Jun Li and Jinren Ni and Cesar de la Fuente-Nunez and Tianfan Fu and Yejin Choi and Pheng-Ann Heng and Fang Wu},
+      year={2025},
+      eprint={2510.01571},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2510.01571}, 
 }
 ```
