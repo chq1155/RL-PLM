@@ -53,6 +53,10 @@ Download only the files needed for the task you want to run and place them under
 the layout described in each task README. You can also pass explicit paths
 through the command-line arguments.
 
+[`ARTIFACTS.md`](ARTIFACTS.md) records the expected local files for each task with
+their exact byte counts and SHA256 checksums, so a downloaded artifact bundle can
+be verified before running experiments.
+
 ## Setup
 
 Use one environment per task when possible because the AMP, antibody, and kinase
@@ -150,6 +154,13 @@ The `.gitignore` excludes generated artifacts:
 
 Keep experiment-specific paths in shell scripts, job files, or command-line
 arguments instead of editing Python source files.
+
+## License
+
+Code in this repository is released under the [MIT License](LICENSE). The
+associated paper is licensed CC BY 4.0 by its authors. Datasets and pretrained
+checkpoints retain the licenses of their upstream sources; consult each before
+redistribution.
 
 ## Citation
 
